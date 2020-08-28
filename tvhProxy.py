@@ -13,6 +13,7 @@ from gevent.pywsgi import WSGIServer
 from flask import Flask, Response, request, jsonify, abort, render_template
 from ssdp import SSDPServer
 from dotenv import load_dotenv
+import json
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv(verbose=True)
@@ -161,7 +162,7 @@ def _get_xmltv():
                 {
                     "field": "start",
                     "type": "numeric",
-                    "value": int(round(datetime.timestamp(datetime.now() + timedelta(hours=48)))),
+                    "value": int(round(datetime.timestamp(datetime.now() + timedelta(hours=72)))),
                     "comparison": "lt"
                 }
             ])
@@ -185,18 +186,30 @@ def _get_xmltv():
             if child.tag == 'channel':
                 channelId = child.attrib['id']
                 channelNo = child[1].text
-                channelNumberMapping[channelId] = channelNo
+                if not channelNo:
+                    logger.error("No channel number for: %s",ElementTree.tostring(child))
+                    continue;
+                if not child[0].text:
+                    logger.error("No channel name for: %s",channelNo)
+                    continue;
                 if channelNo in channelsInEPG:
                     logger.error("duplicate channelNo: %s", channelNo)
+                    continue;
+
+                channelNumberMapping[channelId] = channelNo
                 channelsInEPG[channelNo] = False
-                child.remove(child[1])
-                # check if icon exists (tvh always returns an URL even if there is no channel icon)
+
+                channelName = ElementTree.Element('display-name')
+                channelName.text = str(channelNo) + " " + child[0].text
+                child.insert(0,channelName)
                 for icon in child.iter('icon'):
-                    iconUrl = icon.attrib['src']+".png"
+                    # check if icon exists (tvh always returns an URL even if there is no channel icon)
+                    iconUrl = icon.attrib['src']
                     r = requests.head(iconUrl)
                     if r.status_code == requests.codes.ok:
-                        child[1].attrib['src'] = iconUrl
+                        icon.attrib['src'] = iconUrl
                     else:
+                        logger.error("remove icon: %s", iconUrl)
                         child.remove(icon)
 
                 child.attrib['id'] = channelNo
@@ -209,12 +222,14 @@ def _get_xmltv():
                     child.attrib['start'], "%Y%m%d%H%M%S %z").replace(tzinfo=None)
                 stop_datetime = datetime.strptime(
                     child.attrib['stop'], "%Y%m%d%H%M%S %z").replace(tzinfo=None)
-                if datetime.now() < start_datetime - timedelta(hours=48):
-                    # Plex doesn't like extremely large XML files, we'll remove the details from entries more than 48h in the future
-                    for desc in child.iter('desc'):
-                        child.remove(desc)
-                elif stop_datetime > datetime.now():
-                    # add extra details for programs in the next 48hs
+                if start_datetime >= datetime.now() + timedelta(hours=72):
+                    # Plex doesn't like extremely large XML files, we'll remove the details from entries more than 72h in the future
+                    # Fixed w/ plex server 1.19.2.2673
+                    # for desc in child.iter('desc'):
+                    #    child.remove(desc)
+                    pass
+                elif stop_datetime > datetime.now() and start_datetime < datetime.now() + timedelta(hours=72):
+                    # add extra details for programs in the next 72hs
                     start_timestamp = int(
                         round(datetime.timestamp(start_datetime)))
                     epg_event = epg_events[channelUuid][start_timestamp]
