@@ -24,3 +24,7 @@ A startup script for Ubuntu can be found in tvhProxy.service (change paths and u
 
 #### Plex configuration
 Enter the IP of the host running tvhProxy including port 5004, eg.: ```192.168.1.50:5004```, use ```http://192.168.1.50:5004/epg.xml``` for the EPG (see [Using XMLTV for guide data](https://support.plex.tv/articles/using-an-xmltv-guide/) for full instructions).
+
+Should the proxy keep disappearing or you can't add it, it's worth trying to delete the existing configuration from the database: 
+- See https://support.plex.tv/articles/201100678-repair-a-corrupt-database/ on how to access the plex config database and
+- run ```delete from media_provider_resources;``` to remove any leftover config.
