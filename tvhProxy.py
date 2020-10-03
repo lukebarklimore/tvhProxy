@@ -1,19 +1,21 @@
-from gevent import monkey; monkey.patch_all()
-
-import sched
-import time
-import os
-import requests
-import threading
-import socket
-import logging
-from datetime import timedelta, datetime, time
-import xml.etree.ElementTree as ElementTree
-from gevent.pywsgi import WSGIServer
-from flask import Flask, Response, request, jsonify, abort, render_template
-from ssdp import SSDPServer
-from dotenv import load_dotenv
 import json
+from dotenv import load_dotenv
+from ssdp import SSDPServer
+from flask import Flask, Response, request, jsonify, abort, render_template
+from gevent.pywsgi import WSGIServer
+import xml.etree.ElementTree as ElementTree
+from datetime import timedelta, datetime, time
+import logging
+import socket
+import threading
+from requests.auth import HTTPDigestAuth
+import requests
+import os
+import time
+import sched
+from gevent import monkey
+monkey.patch_all()
+
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv(verbose=True)
@@ -29,14 +31,20 @@ host_ip = socket.gethostbyname(host_name)
 config = {
     'deviceID': os.environ.get('DEVICE_ID') or '12345678',
     'bindAddr': os.environ.get('TVH_BINDADDR') or '',
-    'tvhURL': os.environ.get('TVH_URL') or 'http://test:test@localhost:9981',
-    'tvhProxyURL': os.environ.get('TVH_PROXY_URL'), # only used if set (in case of forward-proxy), otherwise assembled from host + port bel
+    # only used if set (in case of forward-proxy)
+    'tvhURL': os.environ.get('TVH_URL') or 'http://localhost:9981',
+    'tvhProxyURL': os.environ.get('TVH_PROXY_URL'),
     'tvhProxyHost': os.environ.get('TVH_PROXY_HOST') or host_ip,
     'tvhProxyPort': os.environ.get('TVH_PROXY_PORT') or 5004,
-    'tunerCount': os.environ.get('TVH_TUNER_COUNT') or 6, # number of tuners in tvh
-    'tvhWeight': os.environ.get('TVH_WEIGHT') or 300, # subscription priority
-    'chunkSize': os.environ.get('TVH_CHUNK_SIZE') or 1024*1024, # usually you don't need to edit this
-    'streamProfile': os.environ.get('TVH_PROFILE') or 'pass' # specifiy a stream profile that you want to use for adhoc transcoding in tvh, e.g. mp4
+    'tvhUser': os.environ.get('TVH_USER') or '',
+    'tvhPassword': os.environ.get('TVH_PASSWORD') or '',
+    # number of tuners in tvh
+    'tunerCount': os.environ.get('TVH_TUNER_COUNT') or 6,
+    'tvhWeight': os.environ.get('TVH_WEIGHT') or 300,  # subscription priority
+    # usually you don't need to edit this
+    'chunkSize': os.environ.get('TVH_CHUNK_SIZE') or 1024*1024,
+    # specifiy a stream profile that you want to use for adhoc transcoding in tvh, e.g. mp4
+    'streamProfile': os.environ.get('TVH_PROFILE') or 'pass'
 }
 
 discoverData = {
@@ -51,6 +59,7 @@ discoverData = {
     'BaseURL': '%s' % (config['tvhProxyURL'] or "http://" + config['tvhProxyHost'] + ":" + str(config['tvhProxyPort'])),
     'LineupURL': '%s/lineup.json' % (config['tvhProxyURL'] or "http://" + config['tvhProxyHost'] + ":" + str(config['tvhProxyPort']))
 }
+
 
 @app.route('/discover.json')
 def discover():
@@ -107,7 +116,8 @@ def _get_channels():
         'start': 0
     }
     try:
-        r = requests.get(url, params)
+        r = requests.get(url, params=params, auth=HTTPDigestAuth(
+            config['tvhUser'], config['tvhPassword']))
         return r.json()['entries']
 
     except Exception as e:
@@ -125,9 +135,11 @@ def _get_genres():
     url = '%s/api/epg/content_type/list' % config['tvhURL']
     params = {'full': 1}
     try:
-        r = requests.get(url)
+        r = requests.get(url, auth=HTTPDigestAuth(
+            config['tvhUser'], config['tvhPassword']))
         entries = r.json()['entries']
-        r = requests.get(url, params)
+        r = requests.get(url, params=params, auth=HTTPDigestAuth(
+            config['tvhUser'], config['tvhPassword']))
         entries_full = r.json()['entries']
         majorCategories = {}
         genres = {}
@@ -141,7 +153,7 @@ def _get_genres():
                 else:
                     genres[entry['key']] = [entry['val']]
             else:
-                 genres[entry['key']] = [entry['val']]
+                genres[entry['key']] = [entry['val']]
         return genres
     except Exception as e:
         logger.error('An error occured: %s' + repr(e))
@@ -150,10 +162,11 @@ def _get_genres():
 def _get_xmltv():
     try:
         url = '%s/xmltv/channels' % config['tvhURL']
-        r = requests.get(url)
+        r = requests.get(url, auth=HTTPDigestAuth(
+            config['tvhUser'], config['tvhPassword']))
         logger.info('downloading xmltv from %s', r.url)
         tree = ElementTree.ElementTree(
-            ElementTree.fromstring(requests.get(url).content))
+            ElementTree.fromstring(requests.get(url, auth=HTTPDigestAuth(config['tvhUser'], config['tvhPassword'])).content))
         root = tree.getroot()
         url = '%s/api/epg/events/grid' % config['tvhURL']
         params = {
@@ -167,7 +180,8 @@ def _get_xmltv():
                 }
             ])
         }
-        r = requests.get(url, params)
+        r = requests.get(url, params=params,  auth=HTTPDigestAuth(
+            config['tvhUser'], config['tvhPassword']))
         logger.info('downloading epg grid from %s', r.url)
         epg_events_grid = r.json()['entries']
         epg_events = {}
@@ -187,21 +201,19 @@ def _get_xmltv():
                 channelId = child.attrib['id']
                 channelNo = child[1].text
                 if not channelNo:
-                    logger.error("No channel number for: %s",ElementTree.tostring(child))
-                    continue;
+                    logger.error("No channel number for: %s", channelId)
+                    channelNo = "00"
                 if not child[0].text:
-                    logger.error("No channel name for: %s",channelNo)
-                    continue;
+                    logger.error("No channel name for: %s", channelNo)
+                    child[0].text = "No Name"
+                channelNumberMapping[channelId] = channelNo
                 if channelNo in channelsInEPG:
                     logger.error("duplicate channelNo: %s", channelNo)
-                    continue;
 
-                channelNumberMapping[channelId] = channelNo
                 channelsInEPG[channelNo] = False
-
                 channelName = ElementTree.Element('display-name')
                 channelName.text = str(channelNo) + " " + child[0].text
-                child.insert(0,channelName)
+                child.insert(0, channelName)
                 for icon in child.iter('icon'):
                     # check if icon exists (tvh always returns an URL even if there is no channel icon)
                     iconUrl = icon.attrib['src']
