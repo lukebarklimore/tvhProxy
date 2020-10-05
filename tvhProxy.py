@@ -1,3 +1,5 @@
+from gevent import monkey
+monkey.patch_all()
 import json
 from dotenv import load_dotenv
 from ssdp import SSDPServer
@@ -11,10 +13,7 @@ import threading
 from requests.auth import HTTPDigestAuth
 import requests
 import os
-import time
 import sched
-from gevent import monkey
-monkey.patch_all()
 
 
 logging.basicConfig(level=logging.INFO)
