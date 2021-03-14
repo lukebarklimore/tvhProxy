@@ -230,9 +230,9 @@ def _get_xmltv():
                 channelsInEPG[channelNumber] = True
                 child.attrib['channel'] = channelNumber
                 start_datetime = datetime.strptime(
-                    child.attrib['start'], "%Y%m%d%H%M%S %z").replace(tzinfo=None)
+                    child.attrib['start'], "%Y%m%d%H%M%S %z").astimezone(tz=None).replace(tzinfo=None)
                 stop_datetime = datetime.strptime(
-                    child.attrib['stop'], "%Y%m%d%H%M%S %z").replace(tzinfo=None)
+                    child.attrib['stop'], "%Y%m%d%H%M%S %z").astimezone(tz=None).replace(tzinfo=None)
                 if start_datetime >= datetime.now() + timedelta(hours=72):
                     # Plex doesn't like extremely large XML files, we'll remove the details from entries more than 72h in the future
                     # Fixed w/ plex server 1.19.2.2673
