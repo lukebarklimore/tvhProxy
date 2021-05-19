@@ -182,7 +182,7 @@ def _get_xmltv():
         r = requests.get(url, params=params,  auth=HTTPDigestAuth(
             config['tvhUser'], config['tvhPassword']))
         logger.info('downloading epg grid from %s', r.url)
-        epg_events_grid = r.json()['entries']
+        epg_events_grid = r.json(strict=False)['entries']
         epg_events = {}
         event_keys = {}
         for epg_event in epg_events_grid:
